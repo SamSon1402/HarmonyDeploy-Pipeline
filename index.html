@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HarmonyDeploy-Pipeline | Opus Major — Zero-Downtime Game Deployments</title>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --blue: #3b82f6;
+            --green: #10b981;
+            --green-glow: rgba(16,185,129,0.3);
+            --canary: #f59e0b;
+            --canary-glow: rgba(245,158,11,0.3);
+            --danger: #ef4444;
+            --purple: #8b5cf6;
+            --cyan: #06b6d4;
+            --bg: #0a0a0f;
+            --bg-card: #111118;
+            --bg-elevated: #1a1a24;
+            --text-primary: #eeeef0;
+            --text-secondary: #9898a8;
+            --text-muted: #5e5e72;
+            --border: #2a2a3a;
+            --deploy-gradient: linear-gradient(135deg, #3b82f6 0%, #10b981 50%, #f59e0b 100%);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg); color: var(--text-primary); min-height: 100vh;
+            background-image:
+                radial-gradient(ellipse at 10% 90%, rgba(59,130,246,0.07) 0%, transparent 50%),
+                radial-gradient(ellipse at 90% 10%, rgba(16,185,129,0.05) 0%, transparent 50%);
+        }
+        .header {
+            background: rgba(10,10,15,0.9); border-bottom: 1px solid var(--border);
+            padding: 0.6rem 2rem; position: sticky; top: 0; z-index: 100;
+            backdrop-filter: blur(20px);
+        }
+        .header-inner { max-width: 1800px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+        .logo { display: flex; align-items: center; gap: 0.75rem; }
+        .logo-icon {
+            width: 44px; height: 44px; background: var(--deploy-gradient);
+            border-radius: 12px; display: flex; align-items: center; justify-content: center;
+            font-size: 1.3rem; position: relative;
+        }
+        .logo-icon::after {
+            content: ''; position: absolute; inset: -3px; background: var(--deploy-gradient);
+            border-radius: 15px; z-index: -1; opacity: 0.4; filter: blur(10px);
+        }
+        .logo-text { font-size: 1.35rem; font-weight: 700; background: var(--deploy-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .logo-sub { font-size: 0.55rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 3px; }
+        .badges { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+        .badge {
+            background: var(--bg-card); border: 1px solid var(--border);
+            padding: 0.3rem 0.65rem; border-radius: 6px; font-size: 0.6rem;
+            color: var(--text-secondary); font-family: 'IBM Plex Mono', monospace;
+        }
+        .badge.live { background: rgba(16,185,129,0.15); border-color: var(--green); color: var(--green); }
+        .badge.live::before {
+            content: ''; display: inline-block; width: 6px; height: 6px;
+            background: var(--green); border-radius: 50%; margin-right: 5px;
+            animation: blink 1.5s ease-in-out infinite;
+        }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+        .main { max-width: 1800px; margin: 0 auto; padding: 1.25rem 2rem; }
+        .hero { text-align: center; margin-bottom: 1.25rem; }
+        .hero h1 { font-size: 2.1rem; font-weight: 700; margin-bottom: 0.3rem; background: var(--deploy-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .hero p { color: var(--text-secondary); font-size: 0.95rem; }
+
+        /* Pipeline visualization */
+        .pipeline-strip {
+            display: flex; gap: 0.5rem; margin-bottom: 1.25rem;
+            overflow-x: auto; padding-bottom: 0.5rem;
+        }
+        .pipe-stage {
+            flex: 1; min-width: 140px; background: var(--bg-card);
+            border: 1px solid var(--border); border-radius: 12px;
+            padding: 0.85rem; text-align: center; position: relative;
+            transition: all 0.4s;
+        }
+        .pipe-stage.active { border-color: var(--blue); box-shadow: 0 0 20px rgba(59,130,246,0.15); }
+        .pipe-stage.done { border-color: var(--green); }
+        .pipe-stage.failed { border-color: var(--danger); }
+        .pipe-stage.waiting { opacity: 0.5; }
+        .pipe-stage::after {
+            content: '→'; position: absolute; right: -16px; top: 50%;
+            transform: translateY(-50%); color: var(--text-muted); font-size: 1rem;
+        }
+        .pipe-stage:last-child::after { display: none; }
+        .pipe-icon { font-size: 1.4rem; margin-bottom: 0.3rem; }
+        .pipe-name { font-size: 0.7rem; font-weight: 600; margin-bottom: 0.15rem; }
+        .pipe-status {
+            font-size: 0.55rem; font-family: 'IBM Plex Mono', monospace;
+            color: var(--text-muted); padding: 0.15rem 0.5rem;
+            background: var(--bg-elevated); border-radius: 4px; display: inline-block;
+        }
+        .pipe-stage.active .pipe-status { color: var(--blue); background: rgba(59,130,246,0.1); }
+        .pipe-stage.done .pipe-status { color: var(--green); background: rgba(16,185,129,0.1); }
+        .pipe-stage.failed .pipe-status { color: var(--danger); background: rgba(239,68,68,0.1); }
+
+        .workspace { display: grid; grid-template-columns: 1fr 380px; gap: 1rem; }
+        @media (max-width: 1200px) { .workspace { grid-template-columns: 1fr; } }
+
+        .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+        .card-header {
+            padding: 0.85rem 1.1rem; border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: space-between;
+            background: linear-gradient(180deg, rgba(26,26,36,0.5) 0%, transparent 100%);
+        }
+        .card-title { font-size: 0.85rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem; }
+        .card-body { padding: 1.1rem; }
+
+        /* Traffic split viz */
+        .traffic-split { margin-bottom: 1rem; }
+        .split-bar-container {
+            height: 40px; background: var(--bg); border-radius: 10px;
+            overflow: hidden; display: flex; margin-bottom: 0.5rem;
+            border: 1px solid var(--border);
+        }
+        .split-segment {
+            height: 100%; display: flex; align-items: center; justify-content: center;
+            font-size: 0.7rem; font-weight: 700; font-family: 'IBM Plex Mono', monospace;
+            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+        .split-blue {
+            background: linear-gradient(90deg, rgba(59,130,246,0.4), rgba(59,130,246,0.25));
+            color: var(--blue);
+        }
+        .split-green {
+            background: linear-gradient(90deg, rgba(16,185,129,0.25), rgba(16,185,129,0.4));
+            color: var(--green);
+        }
+        .split-labels { display: flex; justify-content: space-between; }
+        .split-label {
+            display: flex; align-items: center; gap: 0.4rem;
+            font-size: 0.7rem; color: var(--text-secondary);
+        }
+        .split-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+        /* Instance grid */
+        .instance-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(55px, 1fr));
+            gap: 6px; margin-top: 0.75rem;
+        }
+        .instance {
+            aspect-ratio: 1; border-radius: 8px; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; font-size: 0.9rem;
+            transition: all 0.4s; cursor: pointer; border: 1px solid transparent;
+        }
+        .instance:hover { transform: scale(1.12); z-index: 2; }
+        .instance-label { font-size: 0.45rem; font-family: 'IBM Plex Mono', monospace; margin-top: 2px; }
+        .instance.blue-env {
+            background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.25); color: var(--blue);
+        }
+        .instance.green-env {
+            background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.25); color: var(--green);
+        }
+        .instance.canary {
+            background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.25); color: var(--canary);
+            animation: canaryPulse 1.5s ease-in-out infinite;
+        }
+        .instance.draining {
+            background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.15); color: var(--danger);
+            opacity: 0.5;
+        }
+        @keyframes canaryPulse {
+            0%,100% { box-shadow: 0 0 0 0 var(--canary-glow); }
+            50% { box-shadow: 0 0 0 5px transparent; }
+        }
+
+        /* Controls */
+        .controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+        .btn {
+            flex: 1; padding: 0.7rem; background: var(--bg-elevated); border: 1px solid var(--border);
+            border-radius: 10px; color: var(--text-primary); font-family: 'Space Grotesk', sans-serif;
+            font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.3s;
+            display: flex; align-items: center; justify-content: center; gap: 0.4rem;
+        }
+        .btn:hover { border-color: var(--blue); background: rgba(59,130,246,0.08); }
+        .btn.active { border-color: var(--green); background: rgba(16,185,129,0.15); color: var(--green); }
+        .btn.rollback:hover { border-color: var(--danger); background: rgba(239,68,68,0.08); }
+
+        /* Metrics */
+        .metrics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }
+        .metric {
+            background: var(--bg-elevated); border-radius: 10px; padding: 0.75rem;
+            text-align: center; border: 1px solid var(--border);
+        }
+        .metric-value { font-size: 1.4rem; font-weight: 700; font-family: 'IBM Plex Mono', monospace; }
+        .metric-label { font-size: 0.55rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
+
+        /* Health chart */
+        .health-bars { display: flex; flex-direction: column; gap: 0.5rem; }
+        .health-row { display: flex; align-items: center; gap: 0.5rem; }
+        .health-label { font-size: 0.65rem; width: 70px; color: var(--text-secondary); }
+        .health-track { flex: 1; height: 18px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+        .health-fill { height: 100%; border-radius: 4px; transition: width 0.5s; display: flex; align-items: center; padding-left: 6px; font-size: 0.55rem; font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
+        .health-fill.good { background: linear-gradient(90deg, rgba(16,185,129,0.6), rgba(16,185,129,0.3)); color: var(--green); }
+        .health-fill.warn { background: linear-gradient(90deg, rgba(245,158,11,0.6), rgba(245,158,11,0.3)); color: var(--canary); }
+        .health-fill.bad { background: linear-gradient(90deg, rgba(239,68,68,0.6), rgba(239,68,68,0.3)); color: var(--danger); }
+
+        /* Deployment log */
+        .deploy-log { max-height: 300px; overflow-y: auto; font-family: 'IBM Plex Mono', monospace; font-size: 0.6rem; line-height: 1.7; }
+        .log-entry { padding: 0.3rem 0; border-bottom: 1px solid rgba(42,42,58,0.3); display: flex; gap: 0.5rem; }
+        .log-time { color: var(--text-muted); min-width: 50px; }
+        .log-level { font-weight: 600; min-width: 40px; }
+        .log-level.info { color: var(--cyan); }
+        .log-level.warn { color: var(--canary); }
+        .log-level.error { color: var(--danger); }
+        .log-level.ok { color: var(--green); }
+        .log-msg { color: var(--text-secondary); }
+
+        /* Sidebar */
+        .sidebar { display: flex; flex-direction: column; gap: 1rem; }
+
+        /* Diff viewer */
+        .diff-view {
+            background: var(--bg); border-radius: 8px; padding: 0.6rem;
+            font-family: 'IBM Plex Mono', monospace; font-size: 0.6rem; line-height: 1.6;
+            max-height: 180px; overflow-y: auto;
+        }
+        .diff-add { color: var(--green); }
+        .diff-rem { color: var(--danger); }
+        .diff-ctx { color: var(--text-muted); }
+        .diff-header { color: var(--purple); font-weight: 600; }
+
+        /* Loading */
+        .loading-overlay {
+            position: fixed; inset: 0; background: rgba(10,10,15,0.97);
+            display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 1000;
+        }
+        .loading-overlay.active { display: flex; }
+        .deploy-anim { display: flex; gap: 12px; margin-bottom: 2rem; }
+        .deploy-dot {
+            width: 16px; height: 16px; border-radius: 50%;
+            animation: dotBounce 1.2s ease-in-out infinite;
+        }
+        .deploy-dot:nth-child(1) { background: var(--blue); animation-delay: 0s; }
+        .deploy-dot:nth-child(2) { background: var(--green); animation-delay: 0.2s; }
+        .deploy-dot:nth-child(3) { background: var(--canary); animation-delay: 0.4s; }
+        @keyframes dotBounce {
+            0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-20px) scale(1.2); }
+        }
+        .loading-text { font-size: 1rem; font-weight: 700; margin-bottom: 0.4rem; }
+        .loading-sub { font-size: 0.8rem; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; margin-bottom: 1.5rem; }
+        .loading-track { width: 260px; height: 4px; background: var(--bg-elevated); border-radius: 2px; overflow: hidden; }
+        .loading-fill { height: 100%; background: var(--deploy-gradient); width: 0%; transition: width 0.3s; }
+
+        /* Toast */
+        .toast {
+            position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--bg-card);
+            border: 1px solid var(--border); border-radius: 12px; padding: 0.8rem 1.2rem;
+            display: flex; align-items: center; gap: 0.6rem;
+            box-shadow: 0 15px 50px rgba(0,0,0,0.6);
+            transform: translateY(100px); opacity: 0;
+            transition: all 0.4s cubic-bezier(0.4,0,0.2,1); z-index: 1000;
+        }
+        .toast.show { transform: translateY(0); opacity: 1; }
+
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: var(--bg); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+        @media (max-width: 768px) { .badges { display: none; } .pipeline-strip { flex-wrap: wrap; } }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-inner">
+            <div class="logo">
+                <div class="logo-icon">🚀</div>
+                <div>
+                    <div class="logo-text">HarmonyDeploy-Pipeline</div>
+                    <div class="logo-sub">Opus Major · Zero-Downtime Deploys</div>
+                </div>
+            </div>
+            <div class="badges">
+                <span class="badge live">● Pipeline Active</span>
+                <span class="badge">Blue/Green</span>
+                <span class="badge">Canary</span>
+                <span class="badge">Terraform</span>
+                <span class="badge">GKE</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="main">
+        <div class="hero">
+            <h1>🎵 Zero-Downtime Deployment Pipeline</h1>
+            <p>Blue/Green & canary rollouts for Opus #1 — ship new game builds without dropping a single jam session</p>
+        </div>
+
+        <div class="pipeline-strip" id="pipelineStrip">
+            <div class="pipe-stage waiting" id="stage-build"><div class="pipe-icon">🔨</div><div class="pipe-name">Build</div><div class="pipe-status">waiting</div></div>
+            <div class="pipe-stage waiting" id="stage-test"><div class="pipe-icon">🧪</div><div class="pipe-name">Test</div><div class="pipe-status">waiting</div></div>
+            <div class="pipe-stage waiting" id="stage-canary"><div class="pipe-icon">🐤</div><div class="pipe-name">Canary</div><div class="pipe-status">waiting</div></div>
+            <div class="pipe-stage waiting" id="stage-promote"><div class="pipe-icon">📈</div><div class="pipe-name">Promote</div><div class="pipe-status">waiting</div></div>
+            <div class="pipe-stage waiting" id="stage-switch"><div class="pipe-icon">🔄</div><div class="pipe-name">Switch</div><div class="pipe-status">waiting</div></div>
+            <div class="pipe-stage waiting" id="stage-verify"><div class="pipe-icon">✅</div><div class="pipe-name">Verify</div><div class="pipe-status">waiting</div></div>
+            <div class="pipe-stage waiting" id="stage-cleanup"><div class="pipe-icon">🧹</div><div class="pipe-name">Cleanup</div><div class="pipe-status">waiting</div></div>
+        </div>
+
+        <div class="workspace">
+            <div style="display: flex; flex-direction: column; gap: 1rem;">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">🔵🟢 Traffic Split & Instance Fleet</h3>
+                        <span style="font-size: 0.65rem; color: var(--text-muted); font-family: 'IBM Plex Mono';" id="deployVersion">v2.4.0 → v2.5.0</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="controls">
+                            <button class="btn" id="deployBtn" onclick="startDeploy()">🚀 Deploy v2.5.0</button>
+                            <button class="btn" onclick="promoteCanary()">📈 Promote Canary</button>
+                            <button class="btn rollback" onclick="rollback()">⏪ Rollback</button>
+                            <button class="btn" onclick="resetDeploy()">🔄 Reset</button>
+                        </div>
+
+                        <div class="traffic-split">
+                            <div class="split-bar-container">
+                                <div class="split-segment split-blue" id="blueTraffic" style="width: 100%;">100%</div>
+                                <div class="split-segment split-green" id="greenTraffic" style="width: 0%;"></div>
+                            </div>
+                            <div class="split-labels">
+                                <div class="split-label"><div class="split-dot" style="background: var(--blue);"></div> Blue (v2.4.0) — <span id="blueLabel">Production</span></div>
+                                <div class="split-label"><div class="split-dot" style="background: var(--green);"></div> Green (v2.5.0) — <span id="greenLabel">Standby</span></div>
+                            </div>
+                        </div>
+
+                        <div class="instance-grid" id="instanceGrid"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">💚 Health Checks</h3>
+                        <span style="font-size: 0.65rem; color: var(--text-muted);" id="healthStatus">All systems nominal</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="health-bars" id="healthBars"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">📜 Deployment Log</h3>
+                        <span style="font-size: 0.6rem; color: var(--text-muted);" id="logCount">0 entries</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="deploy-log" id="deployLog">
+                            <div style="color: var(--text-muted); text-align: center; padding: 1.2rem; font-family: 'IBM Plex Mono', monospace; font-size: 0.7rem;">
+                                Click "Deploy v2.5.0" to start pipeline
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar">
+                <div class="card">
+                    <div class="card-header"><h3 class="card-title">📊 Canary Metrics</h3></div>
+                    <div class="card-body">
+                        <div class="metrics-grid">
+                            <div class="metric">
+                                <div class="metric-value" id="metricErrorRate" style="color: var(--green);">0.0%</div>
+                                <div class="metric-label">Error Rate</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value" id="metricLatency" style="color: var(--cyan);">—</div>
+                                <div class="metric-label">p99 Latency</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value" id="metricRPS" style="color: var(--purple);">—</div>
+                                <div class="metric-label">RPS</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value" id="metricPlayers" style="color: var(--canary);">—</div>
+                                <div class="metric-label">Players on Green</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header"><h3 class="card-title">📝 Terraform Diff</h3></div>
+                    <div class="card-body">
+                        <div class="diff-view" id="diffView">
+                            <div class="diff-header">--- a/terraform/gke-deploy.tf</div>
+                            <div class="diff-header">+++ b/terraform/gke-deploy.tf</div>
+                            <div class="diff-ctx"> resource "google_container_cluster" "opus" {</div>
+                            <div class="diff-ctx">   name     = "opus-prod-eu"</div>
+                            <div class="diff-ctx">   location = "europe-west1-b"</div>
+                            <div class="diff-rem">-  node_version = "1.28.5"</div>
+                            <div class="diff-add">+  node_version = "1.29.1"</div>
+                            <div class="diff-ctx"> </div>
+                            <div class="diff-ctx">   node_pool {</div>
+                            <div class="diff-rem">-    node_count = 8</div>
+                            <div class="diff-add">+    node_count = 12</div>
+                            <div class="diff-rem">-    machine_type = "n2-standard-4"</div>
+                            <div class="diff-add">+    machine_type = "n2-standard-8"</div>
+                            <div class="diff-ctx">   }</div>
+                            <div class="diff-ctx"> </div>
+                            <div class="diff-rem">-  # Game server image</div>
+                            <div class="diff-rem">-  image = "eu.gcr.io/opus/server:v2.4.0"</div>
+                            <div class="diff-add">+  # Game server image (music sync v2)</div>
+                            <div class="diff-add">+  image = "eu.gcr.io/opus/server:v2.5.0"</div>
+                            <div class="diff-add">+  # New: real-time audio mesh</div>
+                            <div class="diff-add">+  audio_mesh_enabled = true</div>
+                            <div class="diff-ctx"> }</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header"><h3 class="card-title">🎯 Rollout Strategy</h3></div>
+                    <div class="card-body">
+                        <div style="font-size: 0.7rem; color: var(--text-secondary); line-height: 1.7;">
+                            <div style="margin-bottom: 0.5rem;">
+                                <span style="color: var(--canary); font-weight: 600;">Phase 1 — Canary (5%)</span><br>
+                                Deploy to 1 pod, monitor error rate & p99 for 60s
+                            </div>
+                            <div style="margin-bottom: 0.5rem;">
+                                <span style="color: var(--blue); font-weight: 600;">Phase 2 — Promote (25%)</span><br>
+                                Shift 25% traffic, validate music sync latency
+                            </div>
+                            <div style="margin-bottom: 0.5rem;">
+                                <span style="color: var(--green); font-weight: 600;">Phase 3 — Switch (100%)</span><br>
+                                Full cutover to green, drain blue gracefully
+                            </div>
+                            <div>
+                                <span style="color: var(--text-muted); font-weight: 600;">Phase 4 — Cleanup</span><br>
+                                Terminate old pods, update Terraform state
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="deploy-anim">
+            <div class="deploy-dot"></div><div class="deploy-dot"></div><div class="deploy-dot"></div>
+        </div>
+        <div class="loading-text">Initializing Deploy Pipeline...</div>
+        <div class="loading-sub" id="loadingSub">Pulling container images...</div>
+        <div class="loading-track"><div class="loading-fill" id="loadingFill"></div></div>
+    </div>
+
+    <div class="toast" id="toast">
+        <span id="toastIcon">✅</span>
+        <div><div id="toastTitle" style="font-size:0.8rem;font-weight:600;"></div><div id="toastMsg" style="font-size:0.65rem;color:var(--text-muted);"></div></div>
+    </div>
+
+    <script>
+        let deployState = 'idle'; // idle, building, canary, promoting, switching, verifying, done
+        let bluePercent = 100;
+        let greenPercent = 0;
+        let instances = [];
+        let logEntries = [];
+        let healthInterval = null;
+        let metricsInterval = null;
+        let currentStage = -1;
+        const stageIds = ['build', 'test', 'canary', 'promote', 'switch', 'verify', 'cleanup'];
+
+        function init() {
+            renderInstances();
+            renderHealth();
+        }
+
+        function renderInstances() {
+            const grid = document.getElementById('instanceGrid');
+            instances = [];
+            for (let i = 0; i < 12; i++) {
+                instances.push({ id: i, env: 'blue', status: 'live' });
+            }
+            updateInstanceGrid();
+        }
+
+        function updateInstanceGrid() {
+            const grid = document.getElementById('instanceGrid');
+            grid.innerHTML = instances.map(inst => {
+                let cls = inst.env === 'blue' ? 'blue-env' : inst.env === 'canary' ? 'canary' : inst.env === 'draining' ? 'draining' : 'green-env';
+                let icon = inst.env === 'canary' ? '🐤' : inst.env === 'blue' ? '🔵' : inst.env === 'draining' ? '💤' : '🟢';
+                return `<div class="instance ${cls}"><span>${icon}</span><span class="instance-label">${inst.env}-${inst.id}</span></div>`;
+            }).join('');
+        }
+
+        function renderHealth() {
+            const bars = document.getElementById('healthBars');
+            const checks = [
+                { name: 'Game Server', val: 100 }, { name: 'Matchmaker', val: 100 },
+                { name: 'Audio Mesh', val: 100 }, { name: 'Session DB', val: 100 },
+                { name: 'CDN Cache', val: 100 }, { name: 'PubSub', val: 100 },
+            ];
+            bars.innerHTML = checks.map(c => {
+                const cls = c.val > 90 ? 'good' : c.val > 60 ? 'warn' : 'bad';
+                return `<div class="health-row">
+                    <span class="health-label">${c.name}</span>
+                    <div class="health-track"><div class="health-fill ${cls}" style="width:${c.val}%">${c.val}%</div></div>
+                </div>`;
+            }).join('');
+        }
+
+        function updateHealth() {
+            const bars = document.querySelectorAll('.health-fill');
+            bars.forEach(bar => {
+                const val = 85 + Math.floor(Math.random() * 15);
+                const cls = val > 90 ? 'good' : val > 60 ? 'warn' : 'bad';
+                bar.style.width = val + '%';
+                bar.textContent = val + '%';
+                bar.className = `health-fill ${cls}`;
+            });
+        }
+
+        function setStage(index, status) {
+            const el = document.getElementById(`stage-${stageIds[index]}`);
+            el.className = `pipe-stage ${status}`;
+            el.querySelector('.pipe-status').textContent = status;
+        }
+
+        function advanceStage() {
+            if (currentStage >= 0) setStage(currentStage, 'done');
+            currentStage++;
+            if (currentStage < stageIds.length) setStage(currentStage, 'active');
+        }
+
+        function startDeploy() {
+            if (deployState !== 'idle') return;
+            const overlay = document.getElementById('loadingOverlay');
+            const bar = document.getElementById('loadingFill');
+            const sub = document.getElementById('loadingSub');
+            overlay.classList.add('active');
+
+            const stages = [
+                'Pulling eu.gcr.io/opus/server:v2.5.0...',
+                'Running unit tests (Go)...',
+                'Running integration tests...',
+                'Building Terraform plan...',
+                'Pipeline ready!'
+            ];
+            let progress = 0, si = 0;
+            const iv = setInterval(() => {
+                progress += Math.random() * 22 + 5;
+                if (progress > 100) progress = 100;
+                bar.style.width = progress + '%';
+                const ns = Math.floor((progress / 100) * stages.length);
+                if (ns !== si && ns < stages.length) { si = ns; sub.textContent = stages[si]; }
+                if (progress >= 100) { clearInterval(iv); setTimeout(() => { overlay.classList.remove('active'); runPipeline(); }, 200); }
+            }, 70);
+        }
+
+        async function runPipeline() {
+            deployState = 'building';
+            document.getElementById('deployBtn').classList.add('active');
+            document.getElementById('deployLog').innerHTML = '';
+            logEntries = [];
+
+            // Start health & metrics updates
+            healthInterval = setInterval(updateHealth, 1500);
+            metricsInterval = setInterval(updateMetrics, 800);
+
+            // Stage 1: Build
+            advanceStage();
+            addLog('info', 'Building container image eu.gcr.io/opus/server:v2.5.0');
+            await wait(1200);
+            addLog('ok', 'Image built successfully (1.2GB, 34 layers)');
+
+            // Stage 2: Test
+            advanceStage();
+            addLog('info', 'Running 847 unit tests...');
+            await wait(1000);
+            addLog('ok', '847/847 tests passed');
+            addLog('info', 'Running integration suite...');
+            await wait(800);
+            addLog('ok', 'Integration tests passed (music sync, matchmaking, combat)');
+
+            // Stage 3: Canary
+            advanceStage();
+            deployState = 'canary';
+            addLog('warn', 'Deploying canary pod (1/12 instances)');
+            instances[0].env = 'canary';
+            updateInstanceGrid();
+            await wait(600);
+            setTrafficSplit(95, 5);
+            addLog('info', 'Traffic split: 95% blue / 5% green (canary)');
+            showToast('🐤', 'Canary Live', '5% traffic on v2.5.0');
+
+            // Monitor canary
+            for (let i = 0; i < 4; i++) {
+                await wait(800);
+                addLog('info', `Canary check ${i + 1}/4: error_rate=0.${Math.floor(Math.random() * 3)}%, p99=${8 + Math.floor(Math.random() * 5)}ms`);
+            }
+            addLog('ok', 'Canary passed all health gates');
+
+            // Stage 4: Promote
+            advanceStage();
+            deployState = 'promoting';
+            addLog('info', 'Promoting to 25% traffic...');
+            for (let i = 0; i < 3; i++) { instances[i].env = 'green'; }
+            updateInstanceGrid();
+            setTrafficSplit(75, 25);
+            await wait(1500);
+            addLog('ok', 'Green environment stable at 25%');
+
+            addLog('info', 'Promoting to 50% traffic...');
+            for (let i = 3; i < 6; i++) { instances[i].env = 'green'; }
+            updateInstanceGrid();
+            setTrafficSplit(50, 50);
+            await wait(1500);
+            addLog('ok', 'Green environment stable at 50%');
+
+            // Stage 5: Switch
+            advanceStage();
+            deployState = 'switching';
+            addLog('warn', 'Initiating full traffic switch to green...');
+            for (let i = 6; i < 9; i++) { instances[i].env = 'green'; }
+            updateInstanceGrid();
+            setTrafficSplit(25, 75);
+            await wait(1000);
+
+            for (let i = 9; i < 12; i++) { instances[i].env = 'green'; }
+            updateInstanceGrid();
+            setTrafficSplit(0, 100);
+            addLog('ok', '100% traffic on green (v2.5.0)');
+            document.getElementById('blueLabel').textContent = 'Draining';
+            document.getElementById('greenLabel').textContent = 'Production';
+            showToast('🟢', 'Green is Live', '100% traffic on v2.5.0');
+
+            // Stage 6: Verify
+            advanceStage();
+            addLog('info', 'Running post-deploy verification...');
+            await wait(1200);
+            addLog('ok', 'All health checks passed');
+            addLog('ok', 'Music sync latency within SLA (< 15ms)');
+            addLog('ok', 'Zero dropped sessions during switchover');
+
+            // Stage 7: Cleanup
+            advanceStage();
+            addLog('info', 'Draining old blue instances...');
+            for (let i = 0; i < 12; i++) {
+                if (instances[i].env === 'green') continue;
+                instances[i].env = 'draining';
+            }
+            updateInstanceGrid();
+            await wait(1000);
+            addLog('ok', 'Old pods terminated, Terraform state updated');
+            addLog('ok', '🎉 Deployment v2.5.0 complete — zero downtime!');
+            setStage(currentStage, 'done');
+
+            deployState = 'done';
+            showToast('🎉', 'Deploy Complete', 'v2.5.0 live with zero downtime');
+        }
+
+        function setTrafficSplit(blue, green) {
+            bluePercent = blue; greenPercent = green;
+            const blueEl = document.getElementById('blueTraffic');
+            const greenEl = document.getElementById('greenTraffic');
+            blueEl.style.width = blue + '%';
+            blueEl.textContent = blue > 0 ? blue + '%' : '';
+            greenEl.style.width = green + '%';
+            greenEl.textContent = green > 0 ? green + '%' : '';
+        }
+
+        function updateMetrics() {
+            if (deployState === 'idle') return;
+            const err = (Math.random() * 0.5).toFixed(2);
+            const lat = 6 + Math.floor(Math.random() * 8);
+            const rps = 1200 + Math.floor(Math.random() * 600);
+            const players = Math.floor(greenPercent / 100 * (3200 + Math.floor(Math.random() * 400)));
+            document.getElementById('metricErrorRate').textContent = err + '%';
+            document.getElementById('metricErrorRate').style.color = parseFloat(err) < 1 ? 'var(--green)' : 'var(--danger)';
+            document.getElementById('metricLatency').textContent = lat + 'ms';
+            document.getElementById('metricRPS').textContent = rps.toLocaleString();
+            document.getElementById('metricPlayers').textContent = players.toLocaleString();
+        }
+
+        function promoteCanary() {
+            if (deployState !== 'canary') return showToast('⚠️', 'Not in canary phase', 'Deploy first');
+            showToast('📈', 'Manual Promote', 'Accelerating canary promotion');
+        }
+
+        function rollback() {
+            if (deployState === 'idle') return;
+            if (healthInterval) clearInterval(healthInterval);
+            if (metricsInterval) clearInterval(metricsInterval);
+            deployState = 'idle';
+            currentStage = -1;
+            stageIds.forEach((_, i) => setStage(i, 'waiting'));
+            setTrafficSplit(100, 0);
+            instances.forEach(inst => inst.env = 'blue');
+            updateInstanceGrid();
+            document.getElementById('blueLabel').textContent = 'Production';
+            document.getElementById('greenLabel').textContent = 'Standby';
+            document.getElementById('deployBtn').classList.remove('active');
+            addLog('error', '⏪ ROLLBACK executed — all traffic back to blue (v2.4.0)');
+            showToast('⏪', 'Rolled Back', 'All traffic on v2.4.0');
+        }
+
+        function resetDeploy() {
+            if (healthInterval) clearInterval(healthInterval);
+            if (metricsInterval) clearInterval(metricsInterval);
+            deployState = 'idle'; currentStage = -1;
+            stageIds.forEach((_, i) => setStage(i, 'waiting'));
+            setTrafficSplit(100, 0);
+            logEntries = [];
+            document.getElementById('deployLog').innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1.2rem; font-family: \'IBM Plex Mono\', monospace; font-size: 0.7rem;">Click "Deploy v2.5.0" to start pipeline</div>';
+            document.getElementById('logCount').textContent = '0 entries';
+            document.getElementById('blueLabel').textContent = 'Production';
+            document.getElementById('greenLabel').textContent = 'Standby';
+            document.getElementById('deployBtn').classList.remove('active');
+            ['metricErrorRate', 'metricLatency', 'metricRPS', 'metricPlayers'].forEach(id => document.getElementById(id).textContent = '—');
+            renderInstances(); renderHealth();
+            showToast('🔄', 'Reset', 'Pipeline cleared');
+        }
+
+        function addLog(level, msg) {
+            const log = document.getElementById('deployLog');
+            const time = new Date().toLocaleTimeString().slice(0, 5);
+            const el = document.createElement('div');
+            el.className = 'log-entry';
+            el.innerHTML = `<span class="log-time">${time}</span><span class="log-level ${level}">${level.toUpperCase()}</span><span class="log-msg">${msg}</span>`;
+            log.appendChild(el);
+            log.scrollTop = log.scrollHeight;
+            logEntries.push(el);
+            document.getElementById('logCount').textContent = `${logEntries.length} entries`;
+        }
+
+        function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+        function showToast(icon, title, msg) {
+            const t = document.getElementById('toast');
+            document.getElementById('toastIcon').textContent = icon;
+            document.getElementById('toastTitle').textContent = title;
+            document.getElementById('toastMsg').textContent = msg;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+
+        init();
+    </script>
+</body>
+</html>
